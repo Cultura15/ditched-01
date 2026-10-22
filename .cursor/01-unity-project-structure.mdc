@@ -1,0 +1,61 @@
+---
+description: Unity folder structure, naming, namespaces, and where new files belong. Use whenever creating files or folders.
+alwaysApply: true
+---
+
+# Unity Project Structure
+
+This project will scale a lot. Keep the structure clean, predictable, and feature-first.
+
+## Target layout
+
+```
+<ProjectRoot>/
+  Assets/
+    Scripts/{Feature}/        # runtime code, grouped by feature
+    Editor/{Feature}/         # editor-only code, mirrors Scripts/{Feature}
+    Prefabs/{Feature}/
+    Scenes/
+    Materials/{Feature}/
+    ScriptableObjects/{Feature}/
+    Art/{Models|Textures|Animations}/{Feature}/
+    Audio/{Music|SFX}/
+    Settings/                 # render pipeline, input, volume profiles, etc.
+    Tests/EditMode/
+    Tests/PlayMode/
+    Plugins/                  # third-party only - never edit
+  Docs/
+    ChangeSummaries/          # lives OUTSIDE Assets on purpose
+  Packages/
+  ProjectSettings/
+```
+
+Examples of `{Feature}`: `Core`, `Environment`, `Gameplay`, `Player`, `UI`, `Audio`, `Utilities`.
+
+## Rules
+- Feature-first: the same `{Feature}` name is reused across `Scripts`, `Editor`, `Prefabs`, `Materials`, etc.
+- Never put files directly in `Assets/` root or directly in `Assets/Scripts/` (always use a feature subfolder).
+- Before creating a file, LOOK at the existing structure and reuse a matching feature folder.
+  If a new feature folder is needed, create it and mention it in the change summary.
+- Keep nesting shallow (max ~4 levels under `Assets/Scripts/`). Split by feature, not by type (no giant `Managers/` or `Helpers/` dumping grounds).
+- One top-level type per file. The filename must equal the class name.
+- Folders and files: PascalCase, no spaces, no special characters.
+- Unity-reserved folder names must be spelled exactly: `Assets`, `Editor`, `Resources`, `StreamingAssets`, `Plugins`, `Gizmos`.
+  Avoid `Resources/` unless there is a strong reason (it bloats builds and hides dependencies).
+- Editor-only code ALWAYS goes under `Assets/Editor/{Feature}/`. Never place editor code in runtime folders
+  and never reference `UnityEditor` from runtime scripts (unless wrapped in `#if UNITY_EDITOR`).
+
+## Namespaces
+- Runtime: `MyGame.{Feature}` (e.g. `MyGame.Environment`)
+- Editor: `MyGame.{Feature}.Editor` (e.g. `MyGame.Environment.Editor`)
+- Replace `MyGame` with the real root namespace. Detect it from existing scripts; if there is none, ask once.
+
+## Assembly definitions
+- Do NOT create `.asmdef` files unless the project already uses them or the user asks.
+- If asmdefs exist: an Editor script needs its own Editor asmdef (include platform: Editor only)
+  that references the runtime asmdef of the same feature.
+- Without asmdefs, Unity automatically compiles `Editor/` folders into the editor assembly.
+
+## Before you finish any task
+- Every new file is in the folder this document prescribes.
+- No stray files in `Assets/` root. No empty placeholder folders unless the user asked for scaffolding.

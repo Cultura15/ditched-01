@@ -1,0 +1,94 @@
+---
+description: Core workflow for this Unity project - git safety, scope control, Unity file safety, and mandatory change summaries
+alwaysApply: true
+---
+
+# Core Workflow
+
+## Environment
+- This is a Unity 3D project edited through the local file system only. There is no Unity CLI and no Unity MCP.
+- You cannot compile, run, or see the Unity Editor. Never claim code "compiles", "works", or "was tested".
+  Say "not compiled - please verify in Unity" and list what to check.
+
+## Git: hands off
+- NEVER run `git add`, `commit`, `push`, `pull`, `stash`, `checkout`, `switch`, `reset`, `rebase`, `merge`, `branch`, `tag`, or any `gh` command.
+- Read-only commands are fine: `git status`, `git diff`, `git log`.
+- Do not edit `.gitignore` or `.gitattributes` unless explicitly asked.
+- The user reviews every change manually and handles all version control.
+
+## Scope discipline
+- Do only what was asked. No drive-by refactors, renames, or "cleanups" in unrelated files.
+  Put ideas in the summary under "Follow-ups" instead of doing them.
+- Do not delete or move existing files unless asked. If it is truly required, list it clearly in the summary.
+- Ask before: adding packages (`Packages/manifest.json`), changing `ProjectSettings/`, renaming public APIs
+  or serialized fields (this breaks scene/prefab references), or any change touching more than ~10 files.
+- If a request is ambiguous in a way that changes the architecture, ask ONE concise question first.
+  Otherwise make a reasonable assumption and state it in the summary.
+
+## Unity files: what NOT to touch
+- `.meta` files: never create or hand-edit them. Unity generates them.
+  If a move/rename/delete of an asset is unavoidable, move/rename/delete its `.meta` alongside it, and flag it in the summary.
+- Never edit `Library/`, `Temp/`, `Logs/`, `obj/`, `UserSettings/`, or generated `.csproj` / `.sln` files.
+- Do not hand-edit YAML assets (`.unity`, `.prefab`, `.asset`, `.mat`, `ProjectSettings/*.asset`) unless explicitly asked.
+  Prefer an Editor script or give the user manual Inspector steps instead.
+- Never modify third-party code or imported packages (`Assets/Plugins/`, Asset Store folders, `Packages/`).
+
+## Change summary (REQUIRED after any task that changes files)
+After finishing, create ONE lightweight summary file:
+
+- Location: `Docs/ChangeSummaries/` at the project root (NOT inside `Assets/`, so Unity does not import it or create `.meta` files).
+- Filename: `YYYY-MM-DD_short-kebab-slug.md` (use today's date, e.g. `2026-10-22_forest-generator.md`).
+- If the user keeps iterating on the same task, UPDATE that task's summary instead of creating a new one.
+- Skip it only for pure Q&A with no file changes.
+- Keep it under ~40 lines. Plain and scannable, no fluff.
+
+Template:
+
+```md
+# {Short title}
+
+- **Date:** YYYY-MM-DD
+- **Type:** feat | fix | refactor | chore | docs
+
+## What
+One to three sentences on what was changed or added.
+
+## Why
+The reason or goal. Mention key trade-offs or assumptions in a line or two.
+
+## Result
+What the user can now do or see. Include "Not compiled/tested - verify in Unity" when relevant.
+
+## Files
+- `Assets/Scripts/Feature/Foo.cs` - added - one-line purpose
+- `Assets/Editor/Feature/FooEditor.cs` - modified - one-line purpose
+
+## Verify in Unity
+1. Short manual steps to confirm it works (e.g. add component X, click Generate).
+
+## Safe to delete after generating
+Only include when the task created one-off tools (e.g. generators). Delete these AFTER the output is generated and reviewed, not before.
+- `Assets/Scripts/Feature/FooGenerator.cs` - one-off generator
+- `Assets/Editor/Feature/FooGeneratorEditor.cs` - its Inspector editor
+- Before deleting: remove the generator component from any scene object (otherwise it shows "Missing Script").
+- Generated output depends on these scripts? **No** (state Yes/No honestly; if Yes, explain what).
+
+## Keep (do not delete)
+- `Assets/Generated/Feature/Prefabs/Foo.prefab` and its Meshes/Materials/Textures - the generated output
+- `Assets/Editor/Core/GeneratedAssetSaver.cs` - shared helper used by future generators
+
+## Follow-ups (optional)
+- Things noticed but intentionally not changed.
+```
+
+Classification rules for "Safe to delete" vs "Keep":
+- Every file you create must appear in exactly one of: Safe to delete, or Keep.
+- Generator scripts, their editor scripts, and their one-off settings assets are "Safe to delete" by default.
+- Shared helpers, anything other code references, and all generated output are "Keep".
+- If you are unsure whether the user wants a generator to stay reusable, assume it is one-off and say so in the summary.
+- Never delete these files yourself. Only list them. The user deletes manually.
+
+## Final reply format
+Keep the chat reply short: what was done, the path of the summary file, and what to verify in Unity.
+When a design choice is non-obvious, explain it in 1-3 sentences (the user is learning to work at a senior level),
+but do not lecture.

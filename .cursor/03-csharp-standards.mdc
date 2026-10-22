@@ -1,0 +1,44 @@
+---
+description: Unity C# coding standards - naming, serialization, performance, and version checks
+globs: ["**/*.cs"]
+alwaysApply: false
+---
+
+# Unity C# Standards
+
+## Check the project before writing code
+- Read `ProjectSettings/ProjectVersion.txt` and only use APIs available in that Unity version.
+- Read `Packages/manifest.json` to know the render pipeline (Built-in / URP / HDRP), Input System (new vs legacy), and other packages.
+  Write shaders, materials, and input code for what is actually installed. Do not assume.
+- Match the style of surrounding code when it differs from this file, unless the user asks to change it.
+
+## Naming and layout
+- Types, methods, properties, public fields: `PascalCase`. Locals and parameters: `camelCase`.
+- Private fields: `_camelCase`. Constants: `PascalCase`. Interfaces: `IName`.
+- One top-level type per file; filename equals type name.
+- Always declare access modifiers. Use file-scoped or block namespaces consistently with the existing code.
+- Order inside classes: constants, serialized fields, private fields, properties, Unity messages
+  (`Awake`, `OnEnable`, `Start`, `Update`, ...), public methods, private methods.
+
+## Serialization
+- Use `[SerializeField] private` instead of public fields for Inspector values.
+- When renaming a serialized field, add `[FormerlySerializedAs("oldName")]` so existing scenes and prefabs keep their data.
+- Never change the type of an existing serialized field without telling the user (data loss risk).
+- Add `[RequireComponent]` when a component depends on another.
+
+## Unity-specific correctness
+- Never use `?.`, `??`, or `is null` on `UnityEngine.Object` types. Use `if (obj != null)` / `if (!obj)`.
+- Prefer `TryGetComponent` over `GetComponent` + null check.
+- Cache component and object references. No `Find*`, `GetComponent*`, or `Camera.main` inside `Update`/`FixedUpdate`.
+- Avoid per-frame allocations (LINQ, `new` collections, string concatenation, boxing) in hot paths.
+- Prefer events/callbacks over polling. Unsubscribe in `OnDisable`/`OnDestroy` what you subscribed in `OnEnable`/`Awake`.
+- Do not introduce singletons or static state by default. Prefer serialized references or explicit dependencies. Ask if unsure.
+- Use `ScriptableObject` for shared, designer-editable data instead of hardcoded values.
+- Use `#if UNITY_EDITOR` only when unavoidable; otherwise keep editor code in `Assets/Editor/`.
+
+## Quality
+- Public APIs get a one-line `/// <summary>`. Do not comment the obvious.
+- No magic numbers: use serialized fields or named constants.
+- Logs: prefix with the class name, keep them minimal, and remove temporary debug logs before finishing.
+- No dead code, no commented-out code, no TODOs left behind without mention in the summary.
+- Keep methods small and focused. Split anything that grows beyond ~50 lines or does more than one job.

@@ -1,0 +1,161 @@
+---
+description: Required pattern for any environment, level, terrain, or procedural generator script - runtime generator plus Inspector editor with Generate/Clear buttons
+globs: ["Assets/Scripts/**/*.cs", "Assets/Editor/**/*.cs"]
+alwaysApply: false
+---
+
+# Environment / Procedural Generators
+
+Whenever you create a script that generates an environment (terrain, props, rooms, vegetation, level layouts, etc.),
+you MUST create a PAIR of files so the user can generate it from the Inspector without entering Play Mode:
+
+| Purpose | Path |
+|---|---|
+| Runtime generator | `Assets/Scripts/{Feature}/{Name}Generator.cs` |
+| Inspector editor | `Assets/Editor/{Feature}/{Name}GeneratorEditor.cs` |
+| Optional settings asset | `Assets/Scripts/{Feature}/{Name}Settings.cs` (ScriptableObject), instances in `Assets/ScriptableObjects/{Feature}/` |
+
+## Runtime generator rules
+- `MonoBehaviour` with `[DisallowMultipleComponent]` and `[AddComponentMenu("MyGame/{Feature}/{Name} Generator")]`.
+- Public `Generate()` and `Clear()` methods hold ALL generation logic. The editor script only calls them.
+- Must work in Edit Mode: no coroutines, no `Update`, no reliance on `Application.isPlaying`, no `Start`/`Awake` side effects.
+- No `using UnityEditor;` in this file (wrap in `#if UNITY_EDITOR` only if truly unavoidable).
+- Config via `[SerializeField] private` fields with `[Header]`, `[Tooltip]`, `[Min]`/`[Range]`. No magic numbers.
+- Deterministic: expose `int seed` and `bool randomizeSeed`. Use a local `System.Random(seed)`, not global `UnityEngine.Random` state.
+- Idempotent: `Generate()` calls `Clear()` first. Running it twice must not duplicate anything.
+- Safe clearing: put everything generated under ONE child container (const name `"[Generated]"`).
+  `Clear()` removes only that container and never touches hand-placed objects.
+- Destroy correctly: `DestroyImmediate` in Edit Mode, `Destroy` in Play Mode.
+- Prefer instantiating existing prefabs / primitives. If you generate Meshes or Materials at edit time,
+  mention in the summary that they live inside the scene unless saved as assets.
+- Validate inputs (null prefabs, zero counts) with clear `Debug.LogWarning` messages that include the generator's name; never throw.
+
+## Editor script rules
+- `[CustomEditor(typeof({Name}Generator))]`, namespace `MyGame.{Feature}.Editor`.
+- Draw the default inspector first, then buttons: **Generate**, **Clear**, and **Randomize Seed & Generate**.
+- Support Undo: `Undo.IncrementCurrentGroup()`, `Undo.SetCurrentGroupName(...)`,
+  `Undo.RegisterFullObjectHierarchyUndo(generator.gameObject, ...)` before changes.
+- After changes: `EditorUtility.SetDirty(generator)` and `EditorSceneManager.MarkSceneDirty(generator.gameObject.scene)`.
+- Disable buttons when required fields are missing (`EditorGUI.BeginDisabledGroup`).
+- Ask for confirmation (`EditorUtility.DisplayDialog`) before Clear if the container has many children.
+- For slow generation, show `EditorUtility.DisplayProgressBar` and ALWAYS clear it in a `finally` block.
+
+## Template: runtime
+
+```csharp
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace MyGame.Environment
+{
+    [DisallowMultipleComponent]
+    [AddComponentMenu("MyGame/Environment/Example Generator")]
+    public class ExampleGenerator : MonoBehaviour
+    {
+        public const string ContainerName = "[Generated]";
+
+        [Header("Setup")]
+        [SerializeField] private GameObject _prefab;
+        [SerializeField, Min(1)] private int _count = 10;
+        [SerializeField, Min(0.1f)] private float _radius = 10f;
+
+        [Header("Randomness")]
+        [SerializeField] private int _seed = 12345;
+        [SerializeField] private bool _randomizeSeed;
+
+        public bool CanGenerate => _prefab != null && _count > 0;
+        public int Seed { get => _seed; set => _seed = value; }
+
+        public void Generate()
+        {
+            if (!CanGenerate)
+            {
+                Debug.LogWarning($"[{nameof(ExampleGenerator)}] Missing prefab or count is 0.", this);
+                return;
+            }
+
+            Clear();
+            if (_randomizeSeed) _seed = System.Environment.TickCount;
+
+            var rng = new System.Random(_seed);
+            var container = new GameObject(ContainerName).transform;
+            container.SetParent(transform, false);
+
+            for (int i = 0; i < _count; i++)
+            {
+                float angle = (float)(rng.NextDouble() * Mathf.PI * 2f);
+                float dist = (float)rng.NextDouble() * _radius;
+                var pos = new Vector3(Mathf.Cos(angle) * dist, 0f, Mathf.Sin(angle) * dist);
+
+                var instance = Instantiate(_prefab, container);
+                instance.transform.localPosition = pos;
+            }
+        }
+
+        public void Clear()
+        {
+            var container = transform.Find(ContainerName);
+            if (container == null) return;
+
+            if (Application.isPlaying) Destroy(container.gameObject);
+            else DestroyImmediate(container.gameObject);
+        }
+    }
+}
+```
+
+## Template: editor
+
+```csharp
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+
+namespace MyGame.Environment.Editor
+{
+    [CustomEditor(typeof(ExampleGenerator))]
+    public class ExampleGeneratorEditor : UnityEditor.Editor
+    {
+        public override void OnInspectorGUI()
+        {
+            DrawDefaultInspector();
+            var generator = (ExampleGenerator)target;
+
+            EditorGUILayout.Space();
+            using (new EditorGUI.DisabledScope(!generator.CanGenerate))
+            {
+                if (GUILayout.Button("Generate", GUILayout.Height(28)))
+                    Run(generator, "Generate Example", generator.Generate);
+
+                if (GUILayout.Button("Randomize Seed & Generate"))
+                    Run(generator, "Generate Example (Random Seed)", () =>
+                    {
+                        generator.Seed = System.Environment.TickCount;
+                        generator.Generate();
+                    });
+            }
+
+            if (GUILayout.Button("Clear"))
+                Run(generator, "Clear Example", generator.Clear);
+        }
+
+        private static void Run(ExampleGenerator generator, string undoName, System.Action action)
+        {
+            Undo.IncrementCurrentGroup();
+            Undo.SetCurrentGroupName(undoName);
+            Undo.RegisterFullObjectHierarchyUndo(generator.gameObject, undoName);
+
+            action();
+
+            EditorUtility.SetDirty(generator);
+            EditorSceneManager.MarkSceneDirty(generator.gameObject.scene);
+        }
+    }
+}
+```
+
+## Done checklist for every generator
+- [ ] Both files created in the correct folders
+- [ ] Generate and Clear work without Play Mode
+- [ ] Running Generate twice does not duplicate objects
+- [ ] Summary lists the "Verify in Unity" steps: add component to a GameObject, assign fields, click Generate

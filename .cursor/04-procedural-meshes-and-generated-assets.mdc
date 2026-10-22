@@ -1,0 +1,196 @@
+---
+description: Rules for procedural meshes and for saving generator output as real assets (meshes, materials, textures, prefabs) under Assets/Generated. Use for any generator that creates geometry.
+globs: ["Assets/Scripts/**/*.cs", "Assets/Editor/**/*.cs", "Assets/Generated/**"]
+alwaysApply: false
+---
+
+# Procedural Meshes and Generated Assets
+
+Generators are DISPOSABLE tools. Their OUTPUT is permanent project data.
+The user will generate an environment through the Inspector, review it, and later DELETE the generator scripts.
+Therefore the result must never depend on temporary in-memory objects or on the generator scripts.
+
+## Core principle
+- NEVER leave geometry only as runtime/in-memory meshes. Every generated Mesh, Material, Texture, and Prefab
+  must be saved as a real asset under `Assets/Generated/`.
+- The saved prefab must still work after the generator and editor scripts are deleted.
+
+## Output layout
+
+```
+Assets/Generated/
+  {Feature}/
+    Meshes/       # .asset  -> {OutputName}_Mesh_000.asset
+    Materials/    # .mat    -> {OutputName}_Mat_000.mat
+    Textures/     # .png / .asset
+    Prefabs/      # .prefab -> {OutputName}.prefab
+```
+
+- `Assets/Generated/` holds output data ONLY. Never put scripts there.
+- `{OutputName}` defaults to the generator name and is exposed as a serialized string on the generator.
+- Names are deterministic. Re-generating OVERWRITES the same assets in place so GUIDs and references stay stable
+  (no `_1`, `_2` duplicates). Only touch assets that start with this generator's `{OutputName}`.
+- Create folders with `AssetDatabase.CreateFolder` (never `System.IO` directly) so Unity tracks them.
+
+## Self-contained output (safe to delete the generator)
+- Saved prefabs may contain ONLY built-in components (Transform, MeshFilter, MeshRenderer, colliders, LODGroup, ...)
+  or components from permanent runtime scripts. They must NOT reference the generator component, the editor script,
+  or any script the user plans to delete.
+- Materials reference shaders or materials, never generator scripts.
+- The generator component itself stays on the scene object only. The user removes it before deleting the scripts.
+- In the change summary, state explicitly whether the generated prefab depends on any script (it should say "No").
+
+## Editor buttons (extends 02-environment-generators)
+- **Generate** - builds in the scene as a preview (in-memory is OK here).
+- **Generate & Save Assets** - generates, saves all meshes/materials/textures as assets, re-points the scene objects to the saved assets, and saves the prefab.
+- **Clear** - removes the scene container only. NEVER deletes anything in `Assets/Generated/`.
+- Optional **Ping Output Folder**: `EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<Object>(folder))`.
+
+## Shared helper (create once, reuse)
+- Put the saving logic in ONE shared editor helper: `Assets/Editor/Core/GeneratedAssetSaver.cs`.
+- Before creating it, check whether it already exists. Reuse and extend it. Do not duplicate it per generator.
+- It is shared infrastructure, so in the summary mark it "Keep (shared helper)", NOT safe to delete.
+- Generators call the helper from the editor script only. Runtime scripts must not reference `AssetDatabase`.
+
+## Mesh rules
+- Build with `Mesh.SetVertices / SetTriangles / SetUVs / SetNormals` (or `MeshData` for heavy cases). Always set `mesh.name`.
+- Winding: Unity front faces are CLOCKWISE when viewed from the front. Wrong winding causes invisible or inside-out faces.
+- Use `mesh.indexFormat = IndexFormat.UInt32` when vertices exceed 65,535.
+- Call `RecalculateBounds()`. Call `RecalculateNormals()` unless you set normals yourself. Add UVs and `RecalculateTangents()` if materials use normal maps.
+- Reuse one mesh for identical shapes instead of creating a copy per object. Merge static pieces when it reduces object count.
+- For colliders, assign saved meshes to `MeshCollider.sharedMesh`. Prefer primitive colliders when possible.
+- Never create meshes in `Update`. Destroy leftover in-memory meshes after saving (`DestroyImmediate`) to avoid leaks.
+- Mention the vertex/triangle budget in the summary for large outputs.
+
+## Material and texture rules
+- Do not guess shader names. Check `Packages/manifest.json` and `ProjectSettings/GraphicsSettings.asset` context to see if
+  the project is Built-in, URP, or HDRP. Prefer a serialized base `Material` field on the generator and create saved variants from it.
+- Procedural textures: save as `.png` (`EncodeToPNG`) into `Textures/` then `AssetDatabase.ImportAsset`; set import settings via `TextureImporter` if needed.
+- Share materials between objects. Do not create one material per object.
+
+## Template: shared editor helper
+
+```csharp
+using System.Collections.Generic;
+using System.IO;
+using UnityEditor;
+using UnityEngine;
+
+namespace MyGame.Core.Editor
+{
+    public static class GeneratedAssetSaver
+    {
+        public const string Root = "Assets/Generated";
+
+        public static string GetFolder(string feature, string kind) // kind: Meshes, Materials, Textures, Prefabs
+        {
+            string path = $"{Root}/{feature}/{kind}";
+            EnsureFolder(path);
+            return path;
+        }
+
+        public static void EnsureFolder(string path)
+        {
+            if (AssetDatabase.IsValidFolder(path)) return;
+            string parent = Path.GetDirectoryName(path).Replace('\\', '/');
+            EnsureFolder(parent);
+            AssetDatabase.CreateFolder(parent, Path.GetFileName(path));
+        }
+
+        // Creates the asset, or overwrites it in place so the GUID stays stable.
+        public static T SaveOrUpdate<T>(T source, string path) where T : Object
+        {
+            var existing = AssetDatabase.LoadAssetAtPath<T>(path);
+            if (existing == null)
+            {
+                AssetDatabase.CreateAsset(source, path);
+                return source;
+            }
+            EditorUtility.CopySerialized(source, existing);
+            EditorUtility.SetDirty(existing);
+            return existing;
+        }
+
+        // Saves every in-memory mesh/material under 'root' as assets, re-points the scene objects,
+        // then saves a prefab named 'baseName'. Returns the prefab asset.
+        public static GameObject BakeToPrefab(GameObject root, string feature, string baseName)
+        {
+            var leftovers = new List<Object>();
+            var meshMap = new Dictionary<Mesh, Mesh>();
+            var matMap = new Dictionary<Material, Material>();
+            int meshIndex = 0, matIndex = 0;
+
+            foreach (var mf in root.GetComponentsInChildren<MeshFilter>(true))
+            {
+                var m = mf.sharedMesh;
+                if (m == null || AssetDatabase.Contains(m)) continue;
+                if (!meshMap.TryGetValue(m, out var saved))
+                {
+                    string path = $"{GetFolder(feature, "Meshes")}/{baseName}_Mesh_{meshIndex++:000}.asset";
+                    saved = SaveOrUpdate(m, path);
+                    if (saved != m) leftovers.Add(m);
+                    meshMap[m] = saved;
+                }
+                mf.sharedMesh = saved;
+            }
+
+            foreach (var r in root.GetComponentsInChildren<Renderer>(true))
+            {
+                var mats = r.sharedMaterials;
+                for (int i = 0; i < mats.Length; i++)
+                {
+                    var mat = mats[i];
+                    if (mat == null || AssetDatabase.Contains(mat)) continue;
+                    if (!matMap.TryGetValue(mat, out var saved))
+                    {
+                        string path = $"{GetFolder(feature, "Materials")}/{baseName}_Mat_{matIndex++:000}.mat";
+                        saved = SaveOrUpdate(mat, path);
+                        if (saved != mat) leftovers.Add(mat);
+                        matMap[mat] = saved;
+                    }
+                    mats[i] = saved;
+                }
+                r.sharedMaterials = mats;
+            }
+
+            // Save a clean copy so the prefab root is named after the asset, not "[Generated]".
+            var copy = Object.Instantiate(root);
+            copy.transform.SetParent(null);
+            copy.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+            copy.transform.localScale = Vector3.one;
+            copy.name = baseName;
+
+            string prefabPath = $"{GetFolder(feature, "Prefabs")}/{baseName}.prefab";
+            var prefab = PrefabUtility.SaveAsPrefabAsset(copy, prefabPath);
+            Object.DestroyImmediate(copy);
+
+            foreach (var o in leftovers) if (o != null) Object.DestroyImmediate(o);
+
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            return prefab;
+        }
+    }
+}
+```
+
+## Template: button in the generator's editor script
+
+```csharp
+if (GUILayout.Button("Generate & Save Assets", GUILayout.Height(28)))
+    Run(generator, "Generate & Save Example", () =>
+    {
+        generator.Generate();
+        var container = generator.transform.Find(ExampleGenerator.ContainerName);
+        if (container != null)
+            GeneratedAssetSaver.BakeToPrefab(container.gameObject, "Environment", generator.OutputName);
+    });
+```
+
+(Asset creation is not covered by Undo. Mention this in the summary.)
+
+## Done checklist for generators that create geometry
+- [ ] Meshes, materials, textures, and prefab are saved under `Assets/Generated/{Feature}/...`
+- [ ] Re-running overwrites in place (no duplicate assets)
+- [ ] The saved prefab has no reference to the generator or editor scripts
+- [ ] Summary has a "Safe to delete after generating" section and a "Keep" section
