@@ -33,6 +33,14 @@ alwaysApply: true
   Prefer an Editor script or give the user manual Inspector steps instead.
 - Never modify third-party code or imported packages (`Assets/Plugins/`, Asset Store folders, `Packages/`).
 
+## Token efficiency
+- Search first (grep/glob), then read only the relevant files or line ranges. Don't read whole folders.
+- Never open `Library/`, `Temp/`, `.meta`, or large YAML assets (.unity, .prefab) unless asked.
+- Edit files in place. Don't re-output a full file to change a few lines.
+- Don't re-read files already in context.
+- Don't paste code back into chat after writing it. Just state what changed.
+- Plan briefly (5 lines max) unless asked for a detailed plan. Ask a question only if truly blocked.
+
 ## Change summary (REQUIRED after any task that changes files)
 After finishing, create ONE lightweight summary file:
 
